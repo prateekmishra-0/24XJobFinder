@@ -2,35 +2,50 @@ name: Job Hunter Pipeline
 
 on:
   schedule:
-    - cron: '*/15 * * * *' # Runs automatically every 15 minutes
-  workflow_dispatch: # Allows you to trigger it manually via the UI
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+# 1. ARCHITECTURAL SAFEGUARD: Prevents parallel runs and database collisions
+concurrency:
+  group: job-hunter-pipeline
+  cancel-in-progress: false
 
 jobs:
-  run-pipeline:
+  pipeline-tasks:
     runs-on: ubuntu-latest
-
+    # 2. ARCHITECTURAL SAFEGUARD: Circuit breaker to prevent infinite hangs
+    timeout-minutes: 20
+    
     steps:
-      - name: Checkout repository code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-          cache: 'pip' # Speeds up subsequent runs by caching dependencies
+          cache: 'pip'
+          # 3. ARCHITECTURAL SAFEGUARD: Optimizes dependency caching
+          cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
-      - name: Run Pipeline Scripts
+      # 4. ARCHITECTURAL SAFEGUARD: Kept as separate steps for clean UI logging
+      - name: Run Followup (Callbacks/Reminders)
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python followup.py
+
+      - name: Run Job Hunter (Discovery)
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}
           TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
-        run: |
-          python followup.py
-          python hunter.py
+        run: python hunter.py

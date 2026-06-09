@@ -72,15 +72,38 @@ def rotate_key():
     """Called when 429 hits. Switches to next key and persists it."""
     global _current_key_index, _ai_client
     next_index = get_next_key_index(_current_key_index)
-    
+
     if next_index == _current_key_index:
-        return False # Only one key in pool
-        
+        return False  # Only one key in pool
+
     print(f"🔄 Rotating Gemini key: #{_current_key_index} → #{next_index}")
     _current_key_index = next_index
     _ai_client = genai.Client(api_key=GEMINI_KEY_POOL[_current_key_index])
     save_active_key_index(_current_key_index)
     return True
+
+
+# ==========================================
+# QUERY BOOKMARK — single integer in MongoDB
+# ==========================================
+def get_query_bookmark():
+    """Returns the query index to start from. 0 = start fresh."""
+    doc = meta_col.find_one({"_id": "query_bookmark"})
+    if doc:
+        return doc.get("index", 0)
+    return 0
+
+def save_query_bookmark(index):
+    """Persist current query index so a hard-killed run can resume."""
+    meta_col.update_one(
+        {"_id": "query_bookmark"},
+        {"$set": {"index": index}},
+        upsert=True
+    )
+
+def reset_query_bookmark():
+    """Called on clean finish or quota exhaustion — next run starts from scratch."""
+    save_query_bookmark(0)
 
 
 # ==========================================
@@ -164,7 +187,6 @@ QUERY_BANK = [
 ]
 
 # URL signal keywords — any URL missing all of these is not a job page.
-# Step 1 pre-filter: saves a TinyFish Fetch call on garbage navigation URLs.
 JOB_URL_SIGNALS = [
     "job", "career", "careers", "position", "opening", "vacancy",
     "apply", "hiring", "greenhouse.io", "lever.co", "ashbyhq",
@@ -180,8 +202,6 @@ TIER_LABEL = {
 
 # ==========================================
 # DYNAMIC CANDIDATE DATA LOADER
-# Reads resume.md + candidate_profile.json at runtime.
-# Update those files when resume or goals change — no code changes ever needed.
 # ==========================================
 def load_candidate_data():
     profile_text = "No profile data loaded."
@@ -278,8 +298,6 @@ Rejection reason: Populate only when tier is Reject. Leave null for A, B, C.
 # STEP 1 — URL SIGNAL PRE-FILTER
 # ==========================================
 def url_has_job_signal(url):
-    """Check the URL contains at least one job-related keyword.
-    Saves a TinyFish Fetch call on navigation pages, category pages, and garbage URLs."""
     url_lower = url.lower()
     return any(signal in url_lower for signal in JOB_URL_SIGNALS)
 
@@ -288,17 +306,13 @@ def url_has_job_signal(url):
 # STEP 2 — HTTP HEAD PRE-FILTER
 # ==========================================
 def url_is_live(url):
-    """Fire a lightweight HEAD request. Drop 404s and redirects to homepages.
-    Saves a TinyFish Fetch call on dead or expired job listings."""
     try:
         response = requests.head(url, timeout=8, allow_redirects=True)
-        # Accept 200 and 405 (some servers reject HEAD but accept GET — still worth fetching)
         if response.status_code in [200, 405]:
             return True
         print(f"⏭️  HEAD check dropped URL (status {response.status_code}): {url[:60]}")
         return False
     except Exception:
-        # Network error — skip gracefully, do not crash the pipeline
         return False
 
 
@@ -306,8 +320,6 @@ def url_is_live(url):
 # STEP 3 — CONTENT LENGTH CHECK
 # ==========================================
 def content_is_valid(text):
-    """After TinyFish Fetch, check that the page has meaningful content.
-    Under 150 chars = broken page, login wall, expired listing, or error page."""
     return len(text.strip()) >= 150
 
 
@@ -315,15 +327,10 @@ def content_is_valid(text):
 # DUAL DEDUPLICATION HASH FUNCTIONS
 # ==========================================
 def generate_url_hash(url):
-    """Hash 1 — Exact URL hash.
-    Catches the same URL returned by multiple queries in the same run."""
     return hashlib.md5(url.encode("utf-8")).hexdigest()
 
 
 def generate_company_title_hash(company, title):
-    """Hash 2 — Company + Title + Year-Month hash.
-    Catches the same job posted simultaneously on Greenhouse, Naukri, and LinkedIn.
-    Month component: a role re-opened 3+ months later is a new opportunity."""
     month_key = datetime.datetime.utcnow().strftime("%Y-%m")
     raw = f"{str(company).lower().strip()}{str(title).lower().strip()}{month_key}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
@@ -333,7 +340,6 @@ def generate_company_title_hash(company, title):
 # TINYFISH API WRAPPERS
 # ==========================================
 def tinyfish_search(query, page):
-    """Search TinyFish and return the list of result objects for a query + page."""
     url = "https://api.search.tinyfish.ai"
     headers = {"X-API-Key": TINYFISH_API_KEY}
     params = {"query": query, "num": 10, "page": page}
@@ -348,8 +354,6 @@ def tinyfish_search(query, page):
 
 
 def tinyfish_fetch(url_to_fetch):
-    """Fetch a job page via TinyFish and return its Markdown content.
-    TinyFish handles proxy rotation and Cloudflare/Akamai bypassing natively."""
     url = "https://api.fetch.tinyfish.ai"
     headers = {"X-API-Key": TINYFISH_API_KEY}
     payload = {"urls": [url_to_fetch], "format": "markdown"}
@@ -368,12 +372,8 @@ def tinyfish_fetch(url_to_fetch):
 # GEMINI EVALUATION
 # ==========================================
 def evaluate_with_gemini(jd_text):
-    """Send JD + candidate data to Gemini. Return parsed JSON dict, or None on error,
-    or the sentinel string 'QUOTA_EXHAUSTED' if the free tier is hit."""
-    
-    # Use dynamic round-robin client instead of a hardcoded one
     client = get_ai_client()
-    
+
     prompt = f"Candidate Information:\n{CANDIDATE_DATA}\n\nJob Description:\n{jd_text}"
     try:
         response = client.models.generate_content(
@@ -386,7 +386,6 @@ def evaluate_with_gemini(jd_text):
         )
         raw_text = response.text.strip()
 
-        # Strip any markdown fences if Gemini misbehaves
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:].strip()
             if raw_text.endswith("```"):
@@ -405,7 +404,7 @@ def evaluate_with_gemini(jd_text):
             if rotated:
                 print("🔄 Retrying with next key...")
                 time.sleep(2)
-                return evaluate_with_gemini(jd_text) # Recursive retry
+                return evaluate_with_gemini(jd_text)  # Recursive retry
             else:
                 print("🚨  CRITICAL: All Gemini API keys exhausted!")
                 send_telegram_notification(
@@ -413,7 +412,7 @@ def evaluate_with_gemini(jd_text):
                     "All keys in the pool hit their daily limits."
                 )
                 return "QUOTA_EXHAUSTED"
-                
+
         print(f"⚠️  Gemini API error (code {api_err.code}): {api_err}")
     except json.JSONDecodeError as e:
         print(f"⚠️  Gemini returned non-JSON: {e}")
@@ -426,8 +425,6 @@ def evaluate_with_gemini(jd_text):
 # TELEGRAM NOTIFICATION HELPERS
 # ==========================================
 def send_telegram_notification(message, job_url=None, job_hash=None):
-    """Send a Telegram message. If job_url and job_hash are provided, attach
-    inline Applied / Skip buttons per the architecture spec."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️  Telegram credentials missing. Skipping alert.")
         return None
@@ -439,7 +436,6 @@ def send_telegram_notification(message, job_url=None, job_hash=None):
         "parse_mode": "Markdown",
         "disable_web_page_preview": False,
     }
-    # Inline keyboard only on actual job match notifications
     if job_url and job_hash:
         payload["reply_markup"] = {
             "inline_keyboard": [[
@@ -450,7 +446,6 @@ def send_telegram_notification(message, job_url=None, job_hash=None):
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            # Return message_id so we can store it for 5-day reminders (followup.py)
             return response.json().get("result", {}).get("message_id")
         print(f"⚠️  Telegram returned status {response.status_code}")
     except Exception as e:
@@ -459,13 +454,12 @@ def send_telegram_notification(message, job_url=None, job_hash=None):
 
 
 def build_telegram_message(tier_label, item, job_url, evaluation):
-    """Build the full structured Telegram message per the architecture spec."""
     skill_eval = evaluation.get("skill_evaluation", {})
     covers = skill_eval.get("candidate_covers", [])
     learnable = skill_eval.get("learnable_missing", [])
     essential = skill_eval.get("essential_missing", [])
 
-    covers_str   = ", ".join(covers)   if covers   else "—"
+    covers_str    = ", ".join(covers)    if covers    else "—"
     learnable_str = ", ".join(learnable) if learnable else None
     essential_str = ", ".join(essential) if essential else None
 
@@ -490,7 +484,6 @@ def build_telegram_message(tier_label, item, job_url, evaluation):
     msg += f"\n💬 {evaluation.get('one_line_summary', '—')}\n\n"
     msg += f"[Apply Here]({job_url})"
 
-    # ATS resume tweaks block
     changes = evaluation.get("resume_changes", [])
     if changes:
         lines = []
@@ -511,8 +504,6 @@ def build_telegram_message(tier_label, item, job_url, evaluation):
 # MONGODB WRITE HELPERS
 # ==========================================
 def mark_seen(url_hash, ct_hash, now):
-    """Mark both the URL hash and the company+title hash as seen in seen_hashes.
-    TTL: 180 days (6 months), per architecture spec."""
     hash_doc = {
         "seen_at":    now,
         "expires_at": now + datetime.timedelta(days=180),
@@ -523,8 +514,6 @@ def mark_seen(url_hash, ct_hash, now):
 
 def save_job(url_hash, ct_hash, job_url, title, company, tier,
              evaluation, jd_markdown, telegram_message_id, now):
-    """Write full job document to the jobs collection.
-    TTL: 14 days. telegram_message_id stored for 5-day reminder logic in followup.py."""
     job_doc = {
         "_id":                  url_hash,
         "url":                  job_url,
@@ -537,9 +526,9 @@ def save_job(url_hash, ct_hash, job_url, title, company, tier,
         "jd_text":              jd_markdown,
         "resume_changes":       evaluation.get("resume_changes", []),
         "one_line_summary":     evaluation.get("one_line_summary", ""),
-        "action":               None,           # Set by followup.py when Applied/Skip pressed
+        "action":               None,
         "saved_at":             now,
-        "expires_at":           now + datetime.timedelta(days=14),   # TTL: 14 days
+        "expires_at":           now + datetime.timedelta(days=14),
     }
     jobs_col.update_one({"_id": url_hash}, {"$set": job_doc}, upsert=True)
 
@@ -551,14 +540,25 @@ def run_pipeline():
     print("🚀 Starting Job Hunter Pipeline...")
     print(f"📋 Candidate data loaded: {len(CANDIDATE_DATA)} characters")
     print(f"🗂️  Query bank: {len(QUERY_BANK)} queries")
+
+    start_index = get_query_bookmark()
+    if start_index > 0:
+        print(f"📌 Resuming from query #{start_index} (bookmark found).")
+    else:
+        print("🆕 Starting from the beginning.")
+
     quota_tripped = False
 
-    for query in QUERY_BANK:
+    for query_index, query in enumerate(QUERY_BANK):
+        # Skip already-completed queries from a previous interrupted run
+        if query_index < start_index:
+            continue
+
         if quota_tripped:
             break
 
         page = 0
-        print(f"\n🔍 Query: '{query[:80]}...'")
+        print(f"\n🔍 [{query_index + 1}/{len(QUERY_BANK)}] Query: '{query[:80]}...'")
 
         while True:
             print(f"📄 Scanning page {page}...")
@@ -568,7 +568,6 @@ def run_pipeline():
                 print("🏁 End of index for this query.")
                 break
 
-            # TinyFish search rate limit buffer: 30 RPM → 1 request per 2 seconds
             time.sleep(2)
             print(f"📥 {len(results)} URLs returned.")
 
@@ -594,7 +593,6 @@ def run_pipeline():
                 ct_hash = generate_company_title_hash(company, title)
                 if seen_hashes_col.find_one({"_id": ct_hash}):
                     print(f"⏭️  Duplicate job (different URL, same company+title): {title[:50]}")
-                    # Also mark this URL hash seen so it is not re-checked
                     now = datetime.datetime.utcnow()
                     seen_hashes_col.update_one(
                         {"_id": url_hash},
@@ -643,11 +641,12 @@ def run_pipeline():
                 evaluation = evaluate_with_gemini(jd_markdown)
 
                 if evaluation == "QUOTA_EXHAUSTED":
+                    # Save bookmark so next run resumes from this query
+                    save_query_bookmark(query_index)
                     quota_tripped = True
                     break
 
                 if evaluation is None:
-                    # Gemini parse error — mark seen to avoid wasting quota again
                     now = datetime.datetime.utcnow()
                     mark_seen(url_hash, ct_hash, now)
                     time.sleep(4.5)
@@ -663,14 +662,12 @@ def run_pipeline():
                 now  = datetime.datetime.utcnow()
 
                 if tier in ("A", "B", "C"):
-                    # ── TELEGRAM NOTIFICATION ─────────────────────────────────
                     tier_label = TIER_LABEL.get(tier, "🔔 New Match")
                     message    = build_telegram_message(tier_label, item, job_url, evaluation)
                     message_id = send_telegram_notification(
                         message, job_url=job_url, job_hash=url_hash
                     )
 
-                    # ── SAVE TO MONGODB — jobs collection ─────────────────────
                     save_job(
                         url_hash, ct_hash, job_url, title, company,
                         tier, evaluation, jd_markdown, message_id, now
@@ -684,12 +681,24 @@ def run_pipeline():
                 # ── MARK BOTH HASHES SEEN ─────────────────────────────────────
                 mark_seen(url_hash, ct_hash, now)
 
-                # Gemini rate limit: 15 RPM → sleep 4.5 seconds between calls
+                # ── SAVE BOOKMARK after every URL so a hard-kill can resume ───
+                # Saves the current query index. Deduplication handles re-scanning
+                # already-processed URLs from this query on the next run (instant skips).
+                save_query_bookmark(query_index)
+
                 time.sleep(4.5)
+
+            if quota_tripped:
+                break
 
             page += 1
 
-    print("\n🏁 Pipeline run complete.")
+    if not quota_tripped:
+        # Clean finish — reset so next run starts from the top
+        reset_query_bookmark()
+        print("\n🏁 Pipeline run complete. Bookmark reset to 0.")
+    else:
+        print(f"\n⏸️  Pipeline paused at query #{start_index}. Next run will resume from there.")
 
 
 if __name__ == "__main__":

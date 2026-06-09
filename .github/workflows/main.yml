@@ -1,11 +1,10 @@
 name: Job Hunter Pipeline
-
 on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
 
-# 1. ARCHITECTURAL SAFEGUARD: Prevents parallel runs and database collisions
+# Prevents parallel runs and database collisions
 concurrency:
   group: job-hunter-pipeline
   cancel-in-progress: false
@@ -13,9 +12,11 @@ concurrency:
 jobs:
   pipeline-tasks:
     runs-on: ubuntu-latest
-    # 2. ARCHITECTURAL SAFEGUARD: Circuit breaker to prevent infinite hangs
-    timeout-minutes: 20
-    
+    # Safety net for frozen TCP sockets only — NOT a logic timeout.
+    # The pipeline exits cleanly on its own via quota exhaustion or finishing all queries.
+    # This value just needs to be "long enough" and well under GitHub's 6-hour hard limit.
+    timeout-minutes: 90
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -25,7 +26,6 @@ jobs:
         with:
           python-version: '3.10'
           cache: 'pip'
-          # 3. ARCHITECTURAL SAFEGUARD: Optimizes dependency caching
           cache-dependency-path: requirements.txt
 
       - name: Install Dependencies
@@ -33,7 +33,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 4. ARCHITECTURAL SAFEGUARD: Kept as separate steps for clean UI logging
       - name: Run Followup (Callbacks/Reminders)
         env:
           MONGO_URI: ${{ secrets.MONGO_URI }}

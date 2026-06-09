@@ -1,0 +1,50 @@
+{
+  "candidate_name": "Prateek Mishra",
+  "target_roles": [
+    "Backend Engineer",
+    "Java Developer",
+    "Software Engineer",
+    "Java Backend Developer",
+    "Backend Software Engineer"
+  ],
+  "experience_level": "0-1 years (Fresher / 2026 Graduate)",
+  "locations": ["Bangalore", "Hyderabad", "Pune", "Mumbai", "Remote", "Nagpur"],
+  "primary_stack": [
+    "Java",
+    "Spring Boot",
+    "Spring Data REST",
+    "Spring Data JPA",
+    "Spring Security",
+    "REST APIs",
+    "HATEOAS",
+    "MySQL",
+    "MongoDB",
+    "Docker",
+    "AWS",
+    "GitHub Actions",
+    "Maven"
+  ],
+  "learning_this_week": [
+    "Spring Security with JWT",
+    "Spring Security with Session ID",
+    "OAuth2"
+  ],
+  "certifications": [
+    "AWS Certified Cloud Practitioner"
+  ],
+  "education": "B.Tech CSE (AI/ML) — Ramdeobaba University (RCOEM) — CGPA 8.71 — 2026",
+  "dealbreakers": [
+    "Requires 3+ years experience",
+    "Requires active security clearance",
+    "Unpaid internship",
+    "Requires .NET, PHP, Ruby, Go, or Rust as primary stack",
+    "Requires React, Angular, or Vue as primary stack"
+  ],
+  "nice_to_have": [
+    "Microservices architecture",
+    "BFSI or fintech domain",
+    "CI/CD with GitHub Actions",
+    "MongoDB or MySQL",
+    "Docker"
+  ]
+}

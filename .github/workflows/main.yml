@@ -1,0 +1,51 @@
+name: Job Hunter Pipeline
+
+on:
+  schedule:
+    # Runs every 15 minutes
+    - cron: '*/15 * * * *'
+  workflow_dispatch: # Allows you to trigger it manually for testing
+
+concurrency:
+  group: job-hunter-pipeline
+  # If a run is taking longer than 15 minutes, queue the next one instead of killing the current one
+  cancel-in-progress: false
+
+jobs:
+  pipeline-tasks:
+    runs-on: ubuntu-latest
+    # Safeguard: Kills the workflow if it hangs for more than 20 minutes to prevent infinite billing/queueing
+    timeout-minutes: 20
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          # Tells GitHub exactly which file to check for caching dependencies
+          cache-dependency-path: requirements.txt
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Followup (Callbacks/Reminders)
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python followup.py
+
+      - name: Run Job Hunter (Discovery)
+        env:
+          MONGO_URI: ${{ secrets.MONGO_URI }}
+          TINYFISH_API_KEY: ${{ secrets.TINYFISH_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+        run: python hunter.py

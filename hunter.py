@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import hashlib
 import json
@@ -107,47 +108,54 @@ def reset_query_bookmark():
 
 
 # ==========================================
-# QUERY BANK — 28 queries across all sources
+# QUERY BANK — 40 queries across all sources
 # ==========================================
 QUERY_BANK = [
     # ------------------------------------------
     # [A] GREENHOUSE — Global ATS (Primary)
+    # Location terms added to all queries that lacked them.
     # ------------------------------------------
-    'site:greenhouse.io "Java" "Spring Boot" "Backend" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager" -"Director"',
-    'site:job-boards.greenhouse.io "Backend Engineer" "Java" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager"',
-    'site:greenhouse.io "Java Developer" "fresher" OR "entry level" OR "0-1" -"Senior" -"Lead" -"Manager"',
-    'site:greenhouse.io "Java" "Spring Boot" "Bangalore" OR "Hyderabad" OR "Pune" -"Senior" -"Lead" -"Manager" -"Director"',
-    'site:greenhouse.io "Software Engineer" "Java" "Backend" "2026" OR "fresher" -"Senior" -"Staff" -"Manager"',
+    'site:greenhouse.io "Java" "Spring Boot" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager" -"Director"',
+    'site:job-boards.greenhouse.io "Backend Engineer" "Java" "India" OR "Remote" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager"',
+    'site:greenhouse.io "Java Developer" "India" OR "Remote" "fresher" OR "entry level" OR "0-1" -"Senior" -"Lead" -"Manager"',
+    'site:greenhouse.io "Java" "Spring Boot" "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Pune" OR "Mumbai" OR "Noida" OR "Gurugram" -"Senior" -"Lead" -"Manager" -"Director"',
+    'site:greenhouse.io "Software Engineer" "Java" "Backend" "India" OR "Remote" "2026" OR "fresher" -"Senior" -"Staff" -"Manager"',
 
     # ------------------------------------------
     # [B] LEVER — Product startups globally
     # ------------------------------------------
-    'site:lever.co "Java" "Spring Boot" "Backend" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager" -"Director"',
-    'site:lever.co "Java Developer" "fresher" OR "entry level" OR "0-2 years" -"Senior" -"Lead" -"Manager"',
-    'site:lever.co "Backend Engineer" "Java" "Bangalore" OR "Hyderabad" OR "Remote" -"Senior" -"Manager" -"Director"',
+    'site:lever.co "Java" "Spring Boot" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Staff" -"Principal" -"Manager" -"Director"',
+    'site:lever.co "Java Developer" "India" OR "Remote" "fresher" OR "entry level" OR "0-2 years" -"Senior" -"Lead" -"Manager"',
+    'site:lever.co "Backend Engineer" "Java" "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Remote" -"Senior" -"Manager" -"Director"',
 
     # ------------------------------------------
     # [C] ASHBY — High-growth startups (newer ATS)
     # ------------------------------------------
-    'site:jobs.ashbyhq.com "Java" "Spring Boot" "Backend" -"Senior" -"Lead" -"Staff" -"Manager" -"Director"',
-    'site:jobs.ashbyhq.com "Backend Engineer" "Java" "entry level" OR "fresher" OR "0-1" -"Senior" -"Manager"',
+    'site:jobs.ashbyhq.com "Java" "Spring Boot" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Staff" -"Manager" -"Director"',
+    'site:jobs.ashbyhq.com "Backend Engineer" "Java" "India" OR "Remote" "entry level" OR "fresher" OR "0-1" -"Senior" -"Manager"',
 
     # ------------------------------------------
     # [D] WORKDAY — Large enterprises and MNCs
+    # Full city list: site: works but returns sparse India results.
+    # Keyword-only variants (no site:) catch Workday India URLs
+    # cross-referenced from other indexed pages.
     # ------------------------------------------
-    'site:myworkdayjobs.com "Java" "Spring Boot" "fresher" OR "entry level" -"Senior" -"Lead" -"Manager" -"Director"',
-    'site:myworkdayjobs.com "Java Backend" "India" -"Senior" -"Lead" -"Manager" -"Director" -"3+ years" -"5+ years"',
+    'site:myworkdayjobs.com "Java" "Spring Boot" "India" OR "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Pune" OR "Mumbai" OR "Noida" OR "Gurugram" OR "Gurgaon" OR "Chennai" -"Senior" -"Lead" -"Manager" -"Director"',
+    'site:myworkdayjobs.com "Java" "Backend" "India" OR "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Pune" -"Senior" -"Lead" -"Manager" -"Director"',
+    '"myworkdayjobs.com" "Java" "Spring Boot" "India" "fresher" OR "entry level" -"Senior" -"Lead"',
+    '"myworkdayjobs.com" "Software Engineer" "Java" "India" 2026 -"Senior" -"Lead" -"Manager"',
 
     # ------------------------------------------
     # [E] SKILL-SPECIFIC ROTATION
     # ------------------------------------------
-    'site:greenhouse.io "Spring Data REST" OR "Spring Security" "Java" -"Senior" -"Lead" -"Manager"',
-    'site:lever.co "Spring Security" "Java" "Backend" -"Senior" -"Lead" -"Manager" -"Director"',
-    'site:greenhouse.io "microservices" "Java" "entry level" OR "fresher" OR "0-1" -"Senior" -"Lead" -"Manager"',
+    'site:greenhouse.io "Spring Data REST" OR "Spring Security" "Java" "India" OR "Remote" -"Senior" -"Lead" -"Manager"',
+    'site:lever.co "Spring Security" "Java" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Manager" -"Director"',
+    'site:greenhouse.io "microservices" "Java" "India" OR "Remote" "entry level" OR "fresher" OR "0-1" -"Senior" -"Lead" -"Manager"',
     'site:naukri.com "Spring Security" "Java" "fresher" OR "0-1 years" -"Senior" -"Lead"',
 
     # ------------------------------------------
     # [F] NAUKRI — Indian IT and domestic market
+    # All inherently India-targeted, no location terms needed.
     # ------------------------------------------
     'site:naukri.com "Java" "Spring Boot" "fresher" 2026 -"Senior" -"Lead"',
     'site:naukri.com "Backend Engineer" "Java" "0-1 years" OR "0-2 years" -"Senior" -"Lead"',
@@ -159,31 +167,39 @@ QUERY_BANK = [
     # ------------------------------------------
     'site:instahyre.com "Java Backend" "fresher" OR "entry level" -"Senior" -"Lead"',
     'site:instahyre.com "Java" "Spring Boot" "0-1" OR "0-2" -"Senior"',
-    'site:wellfound.com "Backend Engineer" "Java" "entry level" -"Senior" -"Lead" -"Principal"',
+    'site:wellfound.com "Backend Engineer" "Java" "India" OR "Remote" "entry level" -"Senior" -"Lead" -"Principal"',
     'site:wellfound.com "Java Developer" "Spring Boot" "India" -"Senior" -"Staff"',
     'site:internshala.com "Java" "Spring Boot" "backend" -"Senior"',
 
     # ------------------------------------------
-    # [H] COMPANY CAREER SITES — Direct sourcing
+    # [H] INDIAN PRODUCT COMPANIES — via aggregators
+    # site:careers.razorpay.com etc. are BROKEN — TinyFish ignores
+    # the site: operator on custom career subdomains and returns
+    # garbage (java.com, oracle.com). Using naukri/greenhouse/lever
+    # with company name instead.
     # ------------------------------------------
-    'site:careers.razorpay.com "Java" "Backend" -"Senior" -"Lead" -"Manager"',
-    'site:careers.phonepe.com "Java" "Backend" -"Senior" -"Lead" -"Manager"',
-    'site:careers.paytm.com "Java" "Spring Boot" -"Senior" -"Lead" -"Manager"',
-    'site:careers.flipkart.com "Java" "Backend Engineer" -"Senior" -"Staff" -"Lead" -"Manager"',
-    'site:careers.swiggy.com "Java" "Backend" -"Senior" -"Lead" -"Manager"',
-    'site:careers.cred.club "Java" "Backend" -"Senior" -"Lead" -"Manager"',
+    'site:naukri.com "Razorpay" OR "PhonePe" OR "CRED" "Java" "0-1 years" OR "0-2 years" OR "fresher" -"Senior"',
+    'site:naukri.com "Flipkart" OR "Swiggy" OR "Zomato" "Java" "Backend" "fresher" OR "0-1" -"Senior" -"Lead"',
+    'site:naukri.com "Paytm" OR "MakeMyTrip" OR "Meesho" "Java" "Spring Boot" "fresher" OR "0-1 years" -"Senior"',
+    'site:greenhouse.io "Razorpay" OR "PhonePe" OR "Swiggy" "Java" "Backend" -"Senior" -"Lead" -"Manager"',
+    'site:lever.co "Flipkart" OR "Zomato" OR "CRED" OR "Meesho" "Java" "Backend" -"Senior" -"Lead"',
 
-    'site:careers.infosys.com "Java" "Spring Boot" "fresher" 2026',
-    'site:careers.wipro.com "Java" "Spring Boot" "fresher" 2026',
-
+    # ------------------------------------------
+    # [I] MNC INDIA ARMS — Amazon, Microsoft, Goldman, Morgan Stanley
+    # These domains are well-indexed. Kept as-is.
+    # ------------------------------------------
     'site:amazon.jobs "Java" "Software Engineer" "India" "entry level" OR "fresher" -"Senior" -"Principal" -"Manager"',
     'site:careers.walmart.com "Java" "Backend" "India" -"Senior" -"Lead" -"Manager" -"Director"',
-
     'site:careers.google.com "Java" "Software Engineer" "India" -"Senior" -"Staff" -"Principal" -"Manager"',
     'site:careers.microsoft.com "Java" "Software Engineer" "India" -"Senior" -"Principal" -"Manager" -"Director"',
-
     'site:goldmansachs.com/careers "Java" "Software Engineer" "India" -"Senior" -"Vice President" -"Managing Director"',
     'site:morganstanley.com/people/careers "Java" "Software Engineer" "India" -"Senior" -"Manager" -"Director"',
+
+    # ------------------------------------------
+    # [J] INFOSYS / WIPRO — Indian IT giants on their own domains
+    # ------------------------------------------
+    'site:careers.infosys.com "Java" "Spring Boot" "fresher" 2026',
+    'site:careers.wipro.com "Java" "Spring Boot" "fresher" 2026',
 ]
 
 # URL signal keywords — any URL missing all of these is not a job page.
@@ -192,6 +208,51 @@ JOB_URL_SIGNALS = [
     "apply", "hiring", "greenhouse.io", "lever.co", "ashbyhq",
     "workday", "naukri", "linkedin.com/jobs", "instahyre", "wellfound"
 ]
+
+# ==========================================
+# LOCATION FILTER — allowlist + blocklist
+# Applied after Gemini evaluation to catch any geography that
+# slipped through the query-level location terms.
+# ==========================================
+LOCATION_ALLOWLIST = [
+    "india", "remote", "bangalore", "bengaluru", "pune", "hyderabad",
+    "mumbai", "noida", "gurugram", "gurgaon", "chennai", "delhi",
+    "kolkata", "cochin", "kochi", "chandigarh",
+]
+
+# Blocklist checked FIRST. If any term matches, job is rejected
+# regardless of allowlist. Handles "Remote (US Only)" etc.
+LOCATION_BLOCKLIST = [
+    "us only", "united states", "usa", "uk only", "united kingdom",
+    "europe", "dubai", "singapore", "germany", "canada", "australia",
+]
+
+def location_is_acceptable(location_str):
+    """
+    Returns True if the job location is India or Remote (and not
+    US/UK/other-only). Empty location strings pass through — Gemini
+    sometimes returns empty for jobs that are genuinely remote/unspecified,
+    and we'd rather let those reach Telegram than silently drop them.
+    """
+    if not location_str:
+        return True
+
+    loc = location_str.lower()
+
+    # Blocklist first — hard reject
+    for term in LOCATION_BLOCKLIST:
+        if term in loc:
+            return False
+
+    # Allowlist — must match at least one term
+    for term in LOCATION_ALLOWLIST:
+        if term in loc:
+            return True
+
+    # Location present but matched nothing in either list — reject.
+    # Better to miss an edge case than send a US job.
+    return False
+
 
 # Tier display labels for Telegram notifications
 TIER_LABEL = {
@@ -299,6 +360,18 @@ Rejection reason: Populate only when tier is Reject. Leave null for A, B, C.
 # ==========================================
 def url_has_job_signal(url):
     url_lower = url.lower()
+
+    # NAUKRI-SPECIFIC GUARD: reject listing/category/article pages.
+    # Real Naukri individual job URL format (confirmed from browser):
+    #   naukri.com/job-listings-<title-slug>-<10+ digit job id>
+    # Listing pages look like:
+    #   naukri.com/spring-boot-jobs
+    #   naukri.com/spring-boot-jobs-in-hyderabad
+    #   naukri.com/code360/library/...
+    # The hyphen after job-listings (not a slash) is the confirmed real format.
+    if "naukri.com" in url_lower:
+        return bool(re.search(r'/job-listings-.+\d{6,}', url_lower))
+
     return any(signal in url_lower for signal in JOB_URL_SIGNALS)
 
 
@@ -377,7 +450,7 @@ def evaluate_with_gemini(jd_text):
     prompt = f"Candidate Information:\n{CANDIDATE_DATA}\n\nJob Description:\n{jd_text}"
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model="gemini-2.0-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -541,6 +614,13 @@ def run_pipeline():
     print(f"📋 Candidate data loaded: {len(CANDIDATE_DATA)} characters")
     print(f"🗂️  Query bank: {len(QUERY_BANK)} queries")
 
+    # ── SOFT TIMEOUT — 25 minutes. Script exits the loop cleanly,
+    # saves bookmark, and lets GitHub free the runner for the next
+    # cron trigger. YAML timeout (45 min) is a hard emergency backstop
+    # that should never fire under normal conditions.
+    RUN_START = time.time()
+    SOFT_TIMEOUT_SECONDS = 25 * 60  # 25 minutes
+
     start_index = get_query_bookmark()
     if start_index > 0:
         print(f"📌 Resuming from query #{start_index} (bookmark found).")
@@ -548,19 +628,39 @@ def run_pipeline():
         print("🆕 Starting from the beginning.")
 
     quota_tripped = False
+    soft_timeout_hit = False
 
     for query_index, query in enumerate(QUERY_BANK):
         # Skip already-completed queries from a previous interrupted run
         if query_index < start_index:
             continue
 
-        if quota_tripped:
+        if quota_tripped or soft_timeout_hit:
+            break
+
+        # ── SOFT TIMEOUT CHECK — outer loop (between queries) ────────────
+        if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
+            print(f"\n⏰ Soft timeout reached between queries. Saving bookmark at #{query_index} and exiting cleanly.")
+            save_query_bookmark(query_index)
+            soft_timeout_hit = True
             break
 
         page = 0
+        # Per-query set for pagination loop detection.
+        # Lives only for the duration of this query's while loop.
+        # Tracks all URLs seen across all pages of this query.
+        urls_seen_this_query = set()
+
         print(f"\n🔍 [{query_index + 1}/{len(QUERY_BANK)}] Query: '{query[:80]}...'")
 
         while True:
+            # ── SOFT TIMEOUT CHECK — inner loop (between pages) ──────────
+            if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
+                print(f"\n⏰ Soft timeout reached mid-query. Saving bookmark at #{query_index} and exiting cleanly.")
+                save_query_bookmark(query_index)
+                soft_timeout_hit = True
+                break
+
             print(f"📄 Scanning page {page}...")
             results = tinyfish_search(query, page=page)
 
@@ -568,10 +668,30 @@ def run_pipeline():
                 print("🏁 End of index for this query.")
                 break
 
+            # ── PAGINATION LOOP DETECTOR ──────────────────────────────────
+            # If TinyFish runs out of real pages it sometimes returns page 0
+            # again instead of an empty list. Detect this by checking what
+            # fraction of the new page's URLs we've already seen this query.
+            current_page_urls = {item.get("url") for item in results if item.get("url")}
+            if urls_seen_this_query and current_page_urls:
+                overlap = len(current_page_urls & urls_seen_this_query)
+                overlap_pct = overlap / len(current_page_urls)
+                if overlap_pct >= 0.8:
+                    print(f"🔁 Pagination loop detected ({overlap}/{len(current_page_urls)} URLs repeat). Breaking.")
+                    break
+            urls_seen_this_query.update(current_page_urls)
+
             time.sleep(2)
             print(f"📥 {len(results)} URLs returned.")
 
             for item in results:
+                # ── SOFT TIMEOUT CHECK — innermost loop (between URLs) ────
+                if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
+                    print(f"\n⏰ Soft timeout reached mid-page. Saving bookmark at #{query_index} and exiting cleanly.")
+                    save_query_bookmark(query_index)
+                    soft_timeout_hit = True
+                    break
+
                 job_url = item.get("url")
                 if not job_url:
                     continue
@@ -641,7 +761,6 @@ def run_pipeline():
                 evaluation = evaluate_with_gemini(jd_markdown)
 
                 if evaluation == "QUOTA_EXHAUSTED":
-                    # Save bookmark so next run resumes from this query
                     save_query_bookmark(query_index)
                     quota_tripped = True
                     break
@@ -656,6 +775,15 @@ def run_pipeline():
                 exp_max = evaluation.get("experience_required_max", 1)
                 if exp_max > 2:
                     print(f"⏩ Code-level reject: role requires {exp_max} years (hard limit: 2).")
+                    evaluation["tier"] = "Reject"
+
+                # ── CODE-LEVEL LOCATION ENFORCEMENT ──────────────────────────
+                # Belt-and-suspenders check on Gemini's extracted location.
+                # Catches anything that slipped through query-level filters
+                # (Dubai jobs, US jobs, non-English postings, etc.)
+                raw_location = evaluation.get("location", "")
+                if not location_is_acceptable(raw_location):
+                    print(f"⏩ Code-level reject: location outside India/Remote — '{raw_location}'.")
                     evaluation["tier"] = "Reject"
 
                 tier = evaluation.get("tier")
@@ -682,21 +810,20 @@ def run_pipeline():
                 mark_seen(url_hash, ct_hash, now)
 
                 # ── SAVE BOOKMARK after every URL so a hard-kill can resume ───
-                # Saves the current query index. Deduplication handles re-scanning
-                # already-processed URLs from this query on the next run (instant skips).
                 save_query_bookmark(query_index)
 
                 time.sleep(4.5)
 
-            if quota_tripped:
+            if quota_tripped or soft_timeout_hit:
                 break
 
             page += 1
 
-    if not quota_tripped:
-        # Clean finish — reset so next run starts from the top
+    if not quota_tripped and not soft_timeout_hit:
         reset_query_bookmark()
         print("\n🏁 Pipeline run complete. Bookmark reset to 0.")
+    elif soft_timeout_hit:
+        print(f"\n⏰ Run ended via soft timeout. Bookmark saved. Next run resumes cleanly.")
     else:
         print(f"\n⏸️  Pipeline paused at query #{start_index}. Next run will resume from there.")
 

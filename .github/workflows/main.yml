@@ -12,11 +12,13 @@ concurrency:
 jobs:
   pipeline-tasks:
     runs-on: ubuntu-latest
-    # Safety net for frozen TCP sockets only — NOT a logic timeout.
-    # The pipeline exits cleanly on its own via quota exhaustion or finishing all queries.
-    # This value just needs to be "long enough" and well under GitHub's 6-hour hard limit.
-    timeout-minutes: 90
-
+    # Hard emergency backstop ONLY.
+    # hunter.py has a 25-minute soft timeout that exits the loop cleanly,
+    # saves the MongoDB bookmark, and lets the runner free up gracefully.
+    # This YAML timeout should never fire under normal conditions.
+    # It exists only to kill the container if a frozen TCP socket or
+    # unexpected hang bypasses all internal timeouts.
+    timeout-minutes: 45
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4

@@ -44,6 +44,7 @@ meta_col = db["followup_meta"]
 # ==========================================
 _current_key_index = None
 _ai_client = None
+_keys_tried_this_rotation = set()  # Tracks which keys have 429'd in the current rotation cycle
 
 def get_active_key_index():
     doc = meta_col.find_one({"_id": "gemini_key_index"})
@@ -62,21 +63,30 @@ def get_next_key_index(current_index):
     return (current_index + 1) % len(GEMINI_KEY_POOL)
 
 def get_ai_client():
-    global _current_key_index, _ai_client
+    global _current_key_index, _ai_client, _keys_tried_this_rotation
     if _current_key_index is None:
         _current_key_index = get_active_key_index()
+        _keys_tried_this_rotation = {_current_key_index}  # Seed with starting key
         _ai_client = genai.Client(api_key=GEMINI_KEY_POOL[_current_key_index])
         print(f"🔑 Gemini key #{_current_key_index} active.")
     return _ai_client
 
 def rotate_key():
-    """Called when 429 hits. Switches to next key and persists it."""
-    global _current_key_index, _ai_client
+    """Called when 429 hits. Switches to next key and persists it.
+    Returns False when we've tried every key in the pool and all are exhausted."""
+    global _current_key_index, _ai_client, _keys_tried_this_rotation
+
     next_index = get_next_key_index(_current_key_index)
 
+    # Only one key in pool — nothing to rotate to
     if next_index == _current_key_index:
-        return False  # Only one key in pool
+        return False
 
+    # We've already tried this key and it 429'd — full pool exhausted
+    if next_index in _keys_tried_this_rotation:
+        return False
+
+    _keys_tried_this_rotation.add(next_index)
     print(f"🔄 Rotating Gemini key: #{_current_key_index} → #{next_index}")
     _current_key_index = next_index
     _ai_client = genai.Client(api_key=GEMINI_KEY_POOL[_current_key_index])
@@ -136,9 +146,6 @@ QUERY_BANK = [
 
     # ------------------------------------------
     # [D] WORKDAY — Large enterprises and MNCs
-    # Full city list: site: works but returns sparse India results.
-    # Keyword-only variants (no site:) catch Workday India URLs
-    # cross-referenced from other indexed pages.
     # ------------------------------------------
     'site:myworkdayjobs.com "Java" "Spring Boot" "India" OR "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Pune" OR "Mumbai" OR "Noida" OR "Gurugram" OR "Gurgaon" OR "Chennai" -"Senior" -"Lead" -"Manager" -"Director"',
     'site:myworkdayjobs.com "Java" "Backend" "India" OR "Bangalore" OR "Bengaluru" OR "Hyderabad" OR "Pune" -"Senior" -"Lead" -"Manager" -"Director"',
@@ -155,7 +162,6 @@ QUERY_BANK = [
 
     # ------------------------------------------
     # [F] NAUKRI — Indian IT and domestic market
-    # All inherently India-targeted, no location terms needed.
     # ------------------------------------------
     'site:naukri.com "Java" "Spring Boot" "fresher" 2026 -"Senior" -"Lead"',
     'site:naukri.com "Backend Engineer" "Java" "0-1 years" OR "0-2 years" -"Senior" -"Lead"',
@@ -173,10 +179,6 @@ QUERY_BANK = [
 
     # ------------------------------------------
     # [H] INDIAN PRODUCT COMPANIES — via aggregators
-    # site:careers.razorpay.com etc. are BROKEN — TinyFish ignores
-    # the site: operator on custom career subdomains and returns
-    # garbage (java.com, oracle.com). Using naukri/greenhouse/lever
-    # with company name instead.
     # ------------------------------------------
     'site:naukri.com "Razorpay" OR "PhonePe" OR "CRED" "Java" "0-1 years" OR "0-2 years" OR "fresher" -"Senior"',
     'site:naukri.com "Flipkart" OR "Swiggy" OR "Zomato" "Java" "Backend" "fresher" OR "0-1" -"Senior" -"Lead"',
@@ -186,7 +188,6 @@ QUERY_BANK = [
 
     # ------------------------------------------
     # [I] MNC INDIA ARMS — Amazon, Microsoft, Goldman, Morgan Stanley
-    # These domains are well-indexed. Kept as-is.
     # ------------------------------------------
     'site:amazon.jobs "Java" "Software Engineer" "India" "entry level" OR "fresher" -"Senior" -"Principal" -"Manager"',
     'site:careers.walmart.com "Java" "Backend" "India" -"Senior" -"Lead" -"Manager" -"Director"',
@@ -211,8 +212,6 @@ JOB_URL_SIGNALS = [
 
 # ==========================================
 # LOCATION FILTER — allowlist + blocklist
-# Applied after Gemini evaluation to catch any geography that
-# slipped through the query-level location terms.
 # ==========================================
 LOCATION_ALLOWLIST = [
     "india", "remote", "bangalore", "bengaluru", "pune", "hyderabad",
@@ -220,37 +219,21 @@ LOCATION_ALLOWLIST = [
     "kolkata", "cochin", "kochi", "chandigarh",
 ]
 
-# Blocklist checked FIRST. If any term matches, job is rejected
-# regardless of allowlist. Handles "Remote (US Only)" etc.
 LOCATION_BLOCKLIST = [
     "us only", "united states", "usa", "uk only", "united kingdom",
     "europe", "dubai", "singapore", "germany", "canada", "australia",
 ]
 
 def location_is_acceptable(location_str):
-    """
-    Returns True if the job location is India or Remote (and not
-    US/UK/other-only). Empty location strings pass through — Gemini
-    sometimes returns empty for jobs that are genuinely remote/unspecified,
-    and we'd rather let those reach Telegram than silently drop them.
-    """
     if not location_str:
         return True
-
     loc = location_str.lower()
-
-    # Blocklist first — hard reject
     for term in LOCATION_BLOCKLIST:
         if term in loc:
             return False
-
-    # Allowlist — must match at least one term
     for term in LOCATION_ALLOWLIST:
         if term in loc:
             return True
-
-    # Location present but matched nothing in either list — reject.
-    # Better to miss an edge case than send a US job.
     return False
 
 
@@ -360,18 +343,8 @@ Rejection reason: Populate only when tier is Reject. Leave null for A, B, C.
 # ==========================================
 def url_has_job_signal(url):
     url_lower = url.lower()
-
-    # NAUKRI-SPECIFIC GUARD: reject listing/category/article pages.
-    # Real Naukri individual job URL format (confirmed from browser):
-    #   naukri.com/job-listings-<title-slug>-<10+ digit job id>
-    # Listing pages look like:
-    #   naukri.com/spring-boot-jobs
-    #   naukri.com/spring-boot-jobs-in-hyderabad
-    #   naukri.com/code360/library/...
-    # The hyphen after job-listings (not a slash) is the confirmed real format.
     if "naukri.com" in url_lower:
         return bool(re.search(r'/job-listings-.+\d{6,}', url_lower))
-
     return any(signal in url_lower for signal in JOB_URL_SIGNALS)
 
 
@@ -442,6 +415,35 @@ def tinyfish_fetch(url_to_fetch):
 
 
 # ==========================================
+# QUOTA ALERT — once per calendar day (UTC)
+# ==========================================
+def _send_quota_alert_once():
+    """Send a Telegram quota-exhausted alert at most once per calendar day (UTC).
+    Checks MongoDB before sending — if an alert already went out today, stays silent."""
+    today_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    doc = meta_col.find_one({"_id": "quota_alert"})
+
+    if doc and doc.get("last_sent_date") == today_str:
+        print("📵  Quota alert already sent today — staying silent.")
+        return
+
+    bookmark = get_query_bookmark()
+    send_telegram_notification(
+        f"🚨 *Gemini API Quota Exhausted*\n\n"
+        f"All {len(GEMINI_KEY_POOL)} key(s) hit their daily limit.\n"
+        f"Pipeline paused at query #{bookmark}.\n"
+        f"Will resume automatically after midnight UTC when limits reset."
+    )
+
+    meta_col.update_one(
+        {"_id": "quota_alert"},
+        {"$set": {"last_sent_date": today_str}},
+        upsert=True
+    )
+    print(f"📬  Quota alert sent and recorded for {today_str}.")
+
+
+# ==========================================
 # GEMINI EVALUATION
 # ==========================================
 def evaluate_with_gemini(jd_text):
@@ -477,13 +479,10 @@ def evaluate_with_gemini(jd_text):
             if rotated:
                 print("🔄 Retrying with next key...")
                 time.sleep(2)
-                return evaluate_with_gemini(jd_text)  # Recursive retry
+                return evaluate_with_gemini(jd_text)  # Recursive retry — now safe, set prevents infinite loop
             else:
                 print("🚨  CRITICAL: All Gemini API keys exhausted!")
-                send_telegram_notification(
-                    "🚨 *CRITICAL WARNING: Gemini API Quota Exhausted!*\n"
-                    "All keys in the pool hit their daily limits."
-                )
+                _send_quota_alert_once()
                 return "QUOTA_EXHAUSTED"
 
         print(f"⚠️  Gemini API error (code {api_err.code}): {api_err}")
@@ -614,10 +613,6 @@ def run_pipeline():
     print(f"📋 Candidate data loaded: {len(CANDIDATE_DATA)} characters")
     print(f"🗂️  Query bank: {len(QUERY_BANK)} queries")
 
-    # ── SOFT TIMEOUT — 25 minutes. Script exits the loop cleanly,
-    # saves bookmark, and lets GitHub free the runner for the next
-    # cron trigger. YAML timeout (45 min) is a hard emergency backstop
-    # that should never fire under normal conditions.
     RUN_START = time.time()
     SOFT_TIMEOUT_SECONDS = 25 * 60  # 25 minutes
 
@@ -631,14 +626,12 @@ def run_pipeline():
     soft_timeout_hit = False
 
     for query_index, query in enumerate(QUERY_BANK):
-        # Skip already-completed queries from a previous interrupted run
         if query_index < start_index:
             continue
 
         if quota_tripped or soft_timeout_hit:
             break
 
-        # ── SOFT TIMEOUT CHECK — outer loop (between queries) ────────────
         if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
             print(f"\n⏰ Soft timeout reached between queries. Saving bookmark at #{query_index} and exiting cleanly.")
             save_query_bookmark(query_index)
@@ -646,15 +639,11 @@ def run_pipeline():
             break
 
         page = 0
-        # Per-query set for pagination loop detection.
-        # Lives only for the duration of this query's while loop.
-        # Tracks all URLs seen across all pages of this query.
         urls_seen_this_query = set()
 
         print(f"\n🔍 [{query_index + 1}/{len(QUERY_BANK)}] Query: '{query[:80]}...'")
 
         while True:
-            # ── SOFT TIMEOUT CHECK — inner loop (between pages) ──────────
             if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
                 print(f"\n⏰ Soft timeout reached mid-query. Saving bookmark at #{query_index} and exiting cleanly.")
                 save_query_bookmark(query_index)
@@ -668,10 +657,6 @@ def run_pipeline():
                 print("🏁 End of index for this query.")
                 break
 
-            # ── PAGINATION LOOP DETECTOR ──────────────────────────────────
-            # If TinyFish runs out of real pages it sometimes returns page 0
-            # again instead of an empty list. Detect this by checking what
-            # fraction of the new page's URLs we've already seen this query.
             current_page_urls = {item.get("url") for item in results if item.get("url")}
             if urls_seen_this_query and current_page_urls:
                 overlap = len(current_page_urls & urls_seen_this_query)
@@ -685,7 +670,6 @@ def run_pipeline():
             print(f"📥 {len(results)} URLs returned.")
 
             for item in results:
-                # ── SOFT TIMEOUT CHECK — innermost loop (between URLs) ────
                 if time.time() - RUN_START > SOFT_TIMEOUT_SECONDS:
                     print(f"\n⏰ Soft timeout reached mid-page. Saving bookmark at #{query_index} and exiting cleanly.")
                     save_query_bookmark(query_index)
@@ -699,17 +683,14 @@ def run_pipeline():
                 title   = item.get("title", "")
                 company = item.get("site_name", "")
 
-                # ── PRE-FILTER STEP 1: URL signal check ──────────────────────
                 if not url_has_job_signal(job_url):
                     print(f"⏭️  No job signal in URL, skipping: {job_url[:60]}")
                     continue
 
-                # ── DEDUPLICATION CHECK — URL hash ────────────────────────────
                 url_hash = generate_url_hash(job_url)
                 if seen_hashes_col.find_one({"_id": url_hash}):
                     continue
 
-                # ── DEDUPLICATION CHECK — Company + Title + Month hash ────────
                 ct_hash = generate_company_title_hash(company, title)
                 if seen_hashes_col.find_one({"_id": ct_hash}):
                     print(f"⏭️  Duplicate job (different URL, same company+title): {title[:50]}")
@@ -724,7 +705,6 @@ def run_pipeline():
                     )
                     continue
 
-                # ── PRE-FILTER STEP 2: HTTP HEAD check ───────────────────────
                 if not url_is_live(job_url):
                     now = datetime.datetime.utcnow()
                     seen_hashes_col.update_one(
@@ -739,10 +719,8 @@ def run_pipeline():
 
                 print(f"✨ New job: {title[:60]} — fetching content...")
 
-                # ── TINYFISH FETCH ────────────────────────────────────────────
                 jd_markdown = tinyfish_fetch(job_url)
 
-                # ── PRE-FILTER STEP 3: Content length check ───────────────────
                 if not content_is_valid(jd_markdown):
                     print("⏭️  Content too short or empty — login wall / expired listing.")
                     now = datetime.datetime.utcnow()
@@ -756,7 +734,6 @@ def run_pipeline():
                     )
                     continue
 
-                # ── GEMINI EVALUATION ─────────────────────────────────────────
                 print("🧠 Evaluating with Gemini...")
                 evaluation = evaluate_with_gemini(jd_markdown)
 
@@ -771,16 +748,11 @@ def run_pipeline():
                     time.sleep(4.5)
                     continue
 
-                # ── CODE-LEVEL EXPERIENCE ENFORCEMENT ────────────────────────
                 exp_max = evaluation.get("experience_required_max", 1)
                 if exp_max > 2:
                     print(f"⏩ Code-level reject: role requires {exp_max} years (hard limit: 2).")
                     evaluation["tier"] = "Reject"
 
-                # ── CODE-LEVEL LOCATION ENFORCEMENT ──────────────────────────
-                # Belt-and-suspenders check on Gemini's extracted location.
-                # Catches anything that slipped through query-level filters
-                # (Dubai jobs, US jobs, non-English postings, etc.)
                 raw_location = evaluation.get("location", "")
                 if not location_is_acceptable(raw_location):
                     print(f"⏩ Code-level reject: location outside India/Remote — '{raw_location}'.")
@@ -806,12 +778,8 @@ def run_pipeline():
                     reason = evaluation.get("rejection_reason") or evaluation.get("one_line_summary", "")
                     print(f"🗑️  Rejected: {reason[:80]}")
 
-                # ── MARK BOTH HASHES SEEN ─────────────────────────────────────
                 mark_seen(url_hash, ct_hash, now)
-
-                # ── SAVE BOOKMARK after every URL so a hard-kill can resume ───
                 save_query_bookmark(query_index)
-
                 time.sleep(4.5)
 
             if quota_tripped or soft_timeout_hit:

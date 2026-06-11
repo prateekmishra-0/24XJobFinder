@@ -118,7 +118,7 @@ def reset_query_bookmark():
 
 
 # ==========================================
-# QUERY BANK — 40 queries across all sources
+# QUERY BANK
 # ==========================================
 QUERY_BANK = [
     # ------------------------------------------
@@ -201,6 +201,79 @@ QUERY_BANK = [
     # ------------------------------------------
     'site:careers.infosys.com "Java" "Spring Boot" "fresher" 2026',
     'site:careers.wipro.com "Java" "Spring Boot" "fresher" 2026',
+
+    # ------------------------------------------
+    # [K] SDE-1 / ASSOCIATE / JUNIOR — Indian role title framing
+    # Indian product companies use these exact strings for
+    # fresher backend positions. Not having them means missing
+    # roles that are a direct match but use different title words.
+    # ------------------------------------------
+    'site:greenhouse.io "SDE-1" OR "SDE 1" "Java" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:lever.co "SDE-1" OR "Associate Engineer" "Java" "Backend" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:instahyre.com "SDE-1" OR "SDE 1" "Java" "Backend" -"Senior" -"Lead"',
+    'site:naukri.com "SDE-1" OR "SDE 1" OR "Associate Software Engineer" "Java" "Spring Boot" -"Senior" -"Lead"',
+    'site:wellfound.com "SDE-1" OR "Associate Engineer" "Java" "India" OR "Remote" -"Senior"',
+    'site:naukri.com "Junior Software Engineer" OR "Junior Developer" "Java" "Spring Boot" "fresher" OR "0-1" OR "0-2" -"Senior"',
+    'site:greenhouse.io "Associate Software Engineer" OR "Junior Software Engineer" "Java" "India" OR "Remote" -"Senior" -"Lead"',
+
+    # ------------------------------------------
+    # [L] BFSI / FINTECH — Prateek has direct domain experience
+    # Capgemini internship was Banking & Financial Services.
+    # BFSI companies look for domain familiarity in freshers
+    # and this gives Prateek a clear edge over generic Java freshers.
+    # ------------------------------------------
+    'site:greenhouse.io "Java" "Backend" "fintech" OR "BFSI" OR "banking" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:lever.co "Java" "Spring Boot" "fintech" OR "payments" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:naukri.com "Java" "Spring Boot" "BFSI" OR "banking" OR "fintech" "fresher" OR "0-1 years" -"Senior"',
+    'site:naukri.com "Razorpay" OR "PhonePe" OR "BharatPe" OR "Juspay" "Java" "Backend" "0-1 years" OR "0-2 years" -"Senior"',
+    'site:naukri.com "HDFC" OR "ICICI" OR "Axis Bank" "Java" "Backend" "fresher" 2026 -"Senior"',
+    'site:myworkdayjobs.com "Java" "fintech" OR "payments" OR "BFSI" "India" -"Senior" -"Lead" -"Manager"',
+
+    # ------------------------------------------
+    # [M] HIBERNATE / JPA SPECIFIC
+    # Most freshers do not have hands-on JPA/Hibernate experience.
+    # Prateek does — soft delete, composite keys, optimistic locking,
+    # lazy loading, flush/clear patterns. Querying these specifically
+    # surfaces roles where he stands out against other freshers.
+    # ------------------------------------------
+    'site:greenhouse.io "Hibernate" OR "JPA" "Java" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Manager"',
+    'site:lever.co "Hibernate" "Java" "Spring Boot" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:naukri.com "Hibernate" "JPA" "Java" "fresher" OR "0-1 years" -"Senior" -"Lead"',
+    'site:instahyre.com "Hibernate" OR "Spring Data JPA" "Java" "0-1" OR "0-2" -"Senior"',
+    'site:myworkdayjobs.com "Hibernate" "Java" "Spring Boot" "India" -"Senior" -"Lead" -"Manager"',
+
+    # ------------------------------------------
+    # [N] MONGODB BACKEND
+    # Most Spring Boot fresher profiles have only MySQL/PostgreSQL.
+    # Prateek has a production MongoDB project (RBAC Mentorship API
+    # actively used at RCOEM). Targets roles wanting both SQL + NoSQL.
+    # ------------------------------------------
+    'site:greenhouse.io "MongoDB" "Java" "Spring Boot" "Backend" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:lever.co "MongoDB" "Java" "Backend" "India" OR "Remote" -"Senior" -"Lead" -"Manager"',
+    'site:naukri.com "MongoDB" "Java" "Spring Boot" "fresher" OR "0-1 years" -"Senior"',
+    'site:wellfound.com "MongoDB" "Java" "Backend" "India" OR "Remote" "entry level" -"Senior"',
+    'site:instahyre.com "MongoDB" "Java" "Spring Boot" "0-1" OR "0-2" -"Senior"',
+
+    # ------------------------------------------
+    # [O] STARTUP AGGREGATORS — Indian startup ecosystem
+    # YC-backed, Sequoia-backed startups post specifically here.
+    # cutshort.io and hirist.tech are India-first platforms that
+    # the existing query bank was not covering at all.
+    # ------------------------------------------
+    'site:ycombinator.com/jobs "Java" "Backend" "India" OR "Remote" -"Senior" -"Lead"',
+    'site:cutshort.io "Java" "Spring Boot" "Backend" "fresher" OR "0-1" OR "0-2" -"Senior" -"Lead"',
+    'site:hirist.tech "Java" "Spring Boot" "fresher" OR "0-1 years" -"Senior" -"Lead"',
+    'site:cutshort.io "Java" "Backend" "Bangalore" OR "Hyderabad" OR "Pune" OR "Remote" "0-1" OR "0-2" -"Senior"',
+
+    # ------------------------------------------
+    # [P] DIRECT COMPANY CAREER PAGES
+    # TCS and HCL are login-walled and dropped.
+    # Oracle, JP Morgan, SAP all have crawlable career pages
+    # and actively hire Java backend engineers in India.
+    # ------------------------------------------
+    'site:jobs.oracle.com "Java" "Backend" "India" "entry level" -"Senior" -"Principal"',
+    'site:careers.jpmorgan.com "Java" "Software Engineer" "India" -"Senior" -"Manager" -"Vice President"',
+    'site:careers.sap.com "Java" "Backend" "India" "Associate" OR "entry level" -"Senior" -"Manager"',
 ]
 
 
@@ -225,6 +298,8 @@ ALLOWED_DOMAINS = [
     "instahyre.com",
     "wellfound.com",
     "internshala.com",
+    "cutshort.io",
+    "hirist.tech",
     # Company career pages
     "amazon.jobs",
     "careers.walmart.com",
@@ -235,6 +310,10 @@ ALLOWED_DOMAINS = [
     "careers.infosys.com",
     "careers.wipro.com",
     "capco.com",
+    "jobs.oracle.com",
+    "careers.jpmorgan.com",
+    "careers.sap.com",
+    "ycombinator.com",
     # LinkedIn — only the /jobs/view/ path is a real job page
     "linkedin.com",
 ]
@@ -379,6 +458,19 @@ with the matching rejection_reason — do NOT attempt skill matching:
 - A talent community / expression of interest form (not a real open role)
 - Any page where the actual job requirements cannot be clearly read
 
+CRITICAL SENIORITY CHECK — JOB TITLE AND LEVEL SIGNALS:
+Before evaluating experience years, check the job title for seniority level indicators.
+If the job title contains ANY of the following words or patterns, treat experience_required_max
+as AT LEAST 3 years, regardless of whether a year range is explicitly stated in the JD:
+- "II", "III", "IV", "2", "3", "4", "5" as a level suffix (e.g. "Software Engineer II", "SDE-2", "SDE 2", "Engineer III")
+- "Senior", "Sr.", "Sr "
+- "Staff"
+- "Principal"
+- "Lead" (when used as a title prefix, e.g. "Lead Engineer", not "team lead responsibilities")
+- "Manager", "Director", "VP", "Vice President"
+Only override this rule if the JD body text EXPLICITLY states a maximum of 0-2 years experience
+AND the role is clearly entry-level in every other way. When in doubt, treat leveled titles as senior.
+
 {
   "tier": "A|B|C|Reject",
   "job_title": "string",
@@ -411,18 +503,29 @@ with the matching rejection_reason — do NOT attempt skill matching:
 
 Tier rules:
 - Tier A: All required skills match. Experience clearly 0-2 years. Strong backend/Java alignment. No essential gaps.
-- Tier B: Required skills mostly match. Minor learnable gaps only (Redis, React basics, RabbitMQ). Worth applying.
+- Tier B: Required skills mostly match. Minor learnable gaps only (1-2 items maximum). Worth applying.
 - Tier C: Partial match. Significant gaps but not disqualifying. Candidate decides.
-- Reject: ANY essential missing skill. OR experience_required_max > 2. OR wrong tech stack. OR non-technical role. OR role type matches not_interested_in list. OR content is not a real job page (see CRITICAL FIRST CHECK above).
+- Reject: ANY essential missing skill. OR experience_required_max > 2. OR wrong tech stack. OR non-technical role. OR role type matches not_interested_in list. OR content is not a real job page (see CRITICAL FIRST CHECK above). OR job title signals a senior/leveled role (see CRITICAL SENIORITY CHECK above).
 
 Skill classification rules:
-- Essential missing: skills the JD requires production experience in (Kafka, Kubernetes, .NET, C#, Go, Rust, PHP). Cannot be learned in 2-3 weeks. Hard reject.
-- Learnable missing: skills credibly picked up in 2-4 weeks (Redis basics, React basics, RabbitMQ basics). Flag, do not reject.
-- Nice-to-have missing: listed as optional (GraphQL, ElasticSearch). Ignore in scoring.
+- Essential missing: skills the JD requires production experience in that cannot be learned in 2-3 weeks.
+  Examples: Kafka, Kubernetes, .NET, C#, Go, Rust, PHP, Oracle PL/SQL, SAP ABAP, COBOL, mainframe technologies,
+  Scala, Terraform, Ansible, extensive AWS hands-on (not certification level), advanced React/Angular (not basics).
+  These are hard rejects — do NOT put them in learnable_missing.
+- Learnable missing: skills that can genuinely be picked up in 2-4 weeks with focused effort.
+  This list must contain AT MOST 3 items. If you find yourself listing more than 3 learnable gaps,
+  stop and reclassify the extras as essential_missing. A role with 4+ learnable gaps is either a
+  senior role misclassified or a stack mismatch — it should be Reject or Tier C, not Tier A or B.
+  True learnable examples: Redis basics (caching concepts, simple get/set), RabbitMQ basics
+  (basic queue producer/consumer), basic Swagger/OpenAPI annotations, basic Docker Compose usage.
+- Nice-to-have missing: listed as optional in the JD (GraphQL, ElasticSearch). Ignore in scoring.
 - Skills listed under learning_this_week in the candidate profile count as known. Do not flag them as missing.
+- Do NOT classify Oracle PL/SQL, Jenkins, SonarQube, WebFlux, Angular, or GraphQL as learnable —
+  these require weeks to months of dedicated work and are essential if the JD treats them as required.
 
 Experience rules:
-- Extract the maximum years explicitly stated. If not stated, default to 1.
+- Extract the maximum years explicitly stated in the JD body. If not stated, default to 1.
+- Apply the CRITICAL SENIORITY CHECK on the job title BEFORE defaulting — a leveled title overrides the default.
 - If max > 2: tier must be Reject and rejection_reason must explain why.
 
 Resume changes rules:

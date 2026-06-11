@@ -203,12 +203,97 @@ QUERY_BANK = [
     'site:careers.wipro.com "Java" "Spring Boot" "fresher" 2026',
 ]
 
-# URL signal keywords — any URL missing all of these is not a job page.
-JOB_URL_SIGNALS = [
-    "job", "career", "careers", "position", "opening", "vacancy",
-    "apply", "hiring", "greenhouse.io", "lever.co", "ashbyhq",
-    "workday", "naukri", "linkedin.com/jobs", "instahyre", "wellfound"
+
+# ==========================================
+# DOMAIN ALLOWLIST — the primary URL gate
+#
+# A URL is only processed if its domain
+# matches one of these known job platforms.
+# Anything else (Facebook, Instagram, Telegram,
+# blogs, news sites, etc.) is dropped immediately
+# before any HTTP call or fetch is made.
+# ==========================================
+ALLOWED_DOMAINS = [
+    # ATS platforms
+    "greenhouse.io",
+    "job-boards.greenhouse.io",
+    "lever.co",
+    "jobs.ashbyhq.com",
+    "myworkdayjobs.com",
+    # Indian job boards
+    "naukri.com",
+    "instahyre.com",
+    "wellfound.com",
+    "internshala.com",
+    # Company career pages
+    "amazon.jobs",
+    "careers.walmart.com",
+    "careers.google.com",
+    "careers.microsoft.com",
+    "goldmansachs.com",
+    "morganstanley.com",
+    "careers.infosys.com",
+    "careers.wipro.com",
+    "capco.com",
+    # LinkedIn — only the /jobs/view/ path is a real job page
+    "linkedin.com",
 ]
+
+# Domains that are never job pages, no matter what the search returns.
+# Checked BEFORE the allowlist so accidental allowlist additions can't
+# let through social / blog content.
+BLOCKED_DOMAINS = [
+    "facebook.com",
+    "instagram.com",
+    "t.me",
+    "telegram.me",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+    "medium.com",
+    "substack.com",
+    "blogspot.com",
+    "wordpress.com",
+    "reddit.com",
+    "quora.com",
+    "whatsapp.com",
+    "threads.net",
+    "tiktok.com",
+]
+
+def url_is_from_allowed_domain(url):
+    """
+    Returns True only when the URL's domain is on the allowlist
+    AND not on the blocklist.
+
+    Special case for LinkedIn: only linkedin.com/jobs/view/ URLs are
+    real job pages. linkedin.com/posts/, /feed/, /in/ etc. are not.
+
+    Naukri has its own structural check — only /job-listings-* URLs
+    with a 6+ digit job ID are real listings.
+    """
+    url_lower = url.lower()
+
+    # Step 1 — hard block social / blog domains first
+    for blocked in BLOCKED_DOMAINS:
+        if blocked in url_lower:
+            return False
+
+    # Step 2 — LinkedIn special case: must be a /jobs/view/ URL
+    if "linkedin.com" in url_lower:
+        return "/jobs/view/" in url_lower
+
+    # Step 3 — Naukri special case: must match the job listing URL pattern
+    if "naukri.com" in url_lower:
+        return bool(re.search(r'/job-listings-.+\d{6,}', url_lower))
+
+    # Step 4 — all other domains: must appear in the allowlist
+    for allowed in ALLOWED_DOMAINS:
+        if allowed in url_lower:
+            return True
+
+    return False
+
 
 # ==========================================
 # LOCATION FILTER — allowlist + blocklist
@@ -282,6 +367,18 @@ SYSTEM_INSTRUCTION = """
 You are an autonomous job evaluation engine. Compare the Job Description against the Candidate Information.
 Output ONLY valid JSON. No markdown, no backticks, no preamble.
 
+CRITICAL FIRST CHECK — IS THIS A REAL JOB PAGE?
+Before any evaluation, check whether the content is an actual job description from a company's
+careers page or ATS. If the content is any of the following, return tier "Reject" immediately
+with the matching rejection_reason — do NOT attempt skill matching:
+- A social media post (Facebook, Instagram, LinkedIn post, Telegram message, WhatsApp forward)
+- A recruiter's referral link post or "drive" announcement
+- A blog article, news article, or aggregator page about jobs
+- A page that says "This job is no longer accepting applications" or similar closure message
+- A page with mostly unrendered template syntax like [[ variable ]] or {{ variable }}
+- A talent community / expression of interest form (not a real open role)
+- Any page where the actual job requirements cannot be clearly read
+
 {
   "tier": "A|B|C|Reject",
   "job_title": "string",
@@ -316,7 +413,7 @@ Tier rules:
 - Tier A: All required skills match. Experience clearly 0-2 years. Strong backend/Java alignment. No essential gaps.
 - Tier B: Required skills mostly match. Minor learnable gaps only (Redis, React basics, RabbitMQ). Worth applying.
 - Tier C: Partial match. Significant gaps but not disqualifying. Candidate decides.
-- Reject: ANY essential missing skill. OR experience_required_max > 2. OR wrong tech stack. OR non-technical role. OR role type matches not_interested_in list.
+- Reject: ANY essential missing skill. OR experience_required_max > 2. OR wrong tech stack. OR non-technical role. OR role type matches not_interested_in list. OR content is not a real job page (see CRITICAL FIRST CHECK above).
 
 Skill classification rules:
 - Essential missing: skills the JD requires production experience in (Kafka, Kubernetes, .NET, C#, Go, Rust, PHP). Cannot be learned in 2-3 weeks. Hard reject.
@@ -339,13 +436,10 @@ Rejection reason: Populate only when tier is Reject. Leave null for A, B, C.
 
 
 # ==========================================
-# STEP 1 — URL SIGNAL PRE-FILTER
+# STEP 1 — DOMAIN ALLOWLIST CHECK
+# (replaces the old loose keyword signal check)
 # ==========================================
-def url_has_job_signal(url):
-    url_lower = url.lower()
-    if "naukri.com" in url_lower:
-        return bool(re.search(r'/job-listings-.+\d{6,}', url_lower))
-    return any(signal in url_lower for signal in JOB_URL_SIGNALS)
+# url_is_from_allowed_domain() is defined above near the ALLOWED_DOMAINS list.
 
 
 # ==========================================
@@ -363,10 +457,58 @@ def url_is_live(url):
 
 
 # ==========================================
-# STEP 3 — CONTENT LENGTH CHECK
+# STEP 3 — CONTENT VALIDITY CHECK
+#
+# Three things are checked:
+# 1. Minimum length (500 chars — raised from 150).
+#    150 chars let Facebook posts and referral links
+#    through. 500 is the minimum for a real JD.
+# 2. Unrendered JS template syntax.
+#    If TinyFish fetched a page before Angular/Vue
+#    hydrated it, the content will be full of
+#    [[ variable ]] or {{ variable }} placeholders.
+#    That is not a real job description.
+# 3. Job-closed signal.
+#    If the page explicitly says the role is closed,
+#    there is nothing to apply to.
 # ==========================================
+# Regex to detect unrendered client-side template tokens
+_JS_TEMPLATE_RE = re.compile(r'\[\[.{1,60}?\]\]|\{\{.{1,60}?\}\}')
+
+# Phrases that indicate the listing is closed
+_CLOSED_PHRASES = [
+    "no longer accepting applications",
+    "this job has expired",
+    "position has been filled",
+    "job is closed",
+    "listing is no longer active",
+    "applications are closed",
+]
+
 def content_is_valid(text):
-    return len(text.strip()) >= 150
+    """
+    Returns (is_valid: bool, reason: str).
+    Callers check is_valid and use reason only for logging.
+    """
+    stripped = text.strip()
+
+    # Check 1 — minimum length
+    if len(stripped) < 500:
+        return False, "too short (< 500 chars) — likely a login wall or empty page"
+
+    text_lower = stripped.lower()
+
+    # Check 2 — unrendered JS templates
+    template_hits = _JS_TEMPLATE_RE.findall(stripped)
+    if len(template_hits) >= 3:
+        return False, f"unrendered JS template ({len(template_hits)} template tokens found) — page fetched before hydration"
+
+    # Check 3 — job is closed
+    for phrase in _CLOSED_PHRASES:
+        if phrase in text_lower:
+            return False, f"listing is closed ('{phrase}' found in content)"
+
+    return True, "ok"
 
 
 # ==========================================
@@ -452,7 +594,7 @@ def evaluate_with_gemini(jd_text):
     prompt = f"Candidate Information:\n{CANDIDATE_DATA}\n\nJob Description:\n{jd_text}"
     try:
         response = client.models.generate_content(
-            model="gemini-3.1-flash-lite",
+            model="gemini-2.0-flash-lite",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
@@ -479,7 +621,7 @@ def evaluate_with_gemini(jd_text):
             if rotated:
                 print("🔄 Retrying with next key...")
                 time.sleep(2)
-                return evaluate_with_gemini(jd_text)  # Recursive retry — now safe, set prevents infinite loop
+                return evaluate_with_gemini(jd_text)  # Recursive retry — safe, set prevents infinite loop
             else:
                 print("🚨  CRITICAL: All Gemini API keys exhausted!")
                 _send_quota_alert_once()
@@ -683,10 +825,14 @@ def run_pipeline():
                 title   = item.get("title", "")
                 company = item.get("site_name", "")
 
-                if not url_has_job_signal(job_url):
-                    print(f"⏭️  No job signal in URL, skipping: {job_url[:60]}")
+                # ── GATE 1: domain allowlist ──────────────────────────────
+                # Drop Facebook posts, Instagram, Telegram channels, blogs,
+                # and any other non-job-platform URL before touching it.
+                if not url_is_from_allowed_domain(job_url):
+                    print(f"🚫 Blocked domain, skipping: {job_url[:80]}")
                     continue
 
+                # ── GATE 2: deduplication ─────────────────────────────────
                 url_hash = generate_url_hash(job_url)
                 if seen_hashes_col.find_one({"_id": url_hash}):
                     continue
@@ -705,6 +851,7 @@ def run_pipeline():
                     )
                     continue
 
+                # ── GATE 3: HTTP liveness ─────────────────────────────────
                 if not url_is_live(job_url):
                     now = datetime.datetime.utcnow()
                     seen_hashes_col.update_one(
@@ -721,8 +868,10 @@ def run_pipeline():
 
                 jd_markdown = tinyfish_fetch(job_url)
 
-                if not content_is_valid(jd_markdown):
-                    print("⏭️  Content too short or empty — login wall / expired listing.")
+                # ── GATE 4: content validity ──────────────────────────────
+                valid, reason = content_is_valid(jd_markdown)
+                if not valid:
+                    print(f"⏭️  Content invalid — {reason}")
                     now = datetime.datetime.utcnow()
                     seen_hashes_col.update_one(
                         {"_id": url_hash},
@@ -734,6 +883,7 @@ def run_pipeline():
                     )
                     continue
 
+                # ── GATE 5: Gemini evaluation ─────────────────────────────
                 print("🧠 Evaluating with Gemini...")
                 evaluation = evaluate_with_gemini(jd_markdown)
 
